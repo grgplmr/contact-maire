@@ -32,6 +32,8 @@
         var select = document.createElement('select');
         select.name = 'commune';
         select.id = 'tpmp-commune';
+        select.required = true;
+        select.setAttribute('aria-required', 'true');
 
         var defaultOption = document.createElement('option');
         defaultOption.value = '';
@@ -62,7 +64,14 @@
         emailInput.name = 'email';
         emailInput.id = 'tpmp-email';
         emailInput.placeholder = 'votre@email.com';
+        emailInput.required = true;
+        emailInput.setAttribute('aria-required', 'true');
         emailField.appendChild(emailInput);
+
+        var emailHint = document.createElement('p');
+        emailHint.className = 'tpmp-email-hint';
+        emailHint.textContent = 'Votre e-mail ne sera pas enregistré. Il sert uniquement à permettre à la mairie de vous répondre.';
+        emailField.appendChild(emailHint);
 
         form.appendChild(emailField);
 
@@ -115,6 +124,8 @@
         messageInput.name = 'message';
         messageInput.id = 'tpmp-message';
         messageInput.rows = 5;
+        messageInput.required = true;
+        messageInput.setAttribute('aria-required', 'true');
         messageField.appendChild(messageInput);
 
         form.appendChild(messageField);
