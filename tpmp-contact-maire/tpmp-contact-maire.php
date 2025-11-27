@@ -32,6 +32,11 @@ class TPMP_Contact_Maire {
     const TEMPLATES_OPTION = 'tpmp_contact_maire_templates';
 
     /**
+     * Option name for storing forbidden words.
+     */
+    const FORBIDDEN_WORDS_OPTION = 'tpmp_contact_maire_forbidden_words';
+
+    /**
      * Shortcode tag.
      */
     const SHORTCODE = 'tpmp_contact_maire';
@@ -141,6 +146,30 @@ class TPMP_Contact_Maire {
 
         if ( empty( $to ) || ! is_email( $to ) ) {
             self::send_json_error( 'Email de la mairie invalide.' );
+        }
+
+        $forbidden_words = get_option( self::FORBIDDEN_WORDS_OPTION, array() );
+
+        if ( ! empty( $forbidden_words ) ) {
+            $normalized_message = self::normalize_text( $message );
+
+            foreach ( $forbidden_words as $word ) {
+                $word = trim( (string) $word );
+
+                if ( '' === $word ) {
+                    continue;
+                }
+
+                $normalized_word = self::normalize_text( $word );
+
+                if ( '' === $normalized_word ) {
+                    continue;
+                }
+
+                if ( false !== strpos( $normalized_message, $normalized_word ) ) {
+                    self::send_json_error( 'Votre message contient un terme non autorisé. Merci de le reformuler.' );
+                }
+            }
         }
 
         $subject = sprintf( 'Message TPMP pour la mairie de %s', $commune_label );
@@ -258,13 +287,33 @@ class TPMP_Contact_Maire {
             return;
         }
 
+        if ( isset( $_GET['tpmp_export'] ) ) {
+            self::handle_exports();
+            return;
+        }
+
+        if ( isset( $_POST['tpmp_communes_csv_action'] ) ) {
+            self::handle_communes_import();
+            return;
+        }
+
         if ( isset( $_REQUEST['tpmp_contact_maire_action'] ) ) {
             self::handle_commune_submission();
             return;
         }
 
+        if ( isset( $_POST['tpmp_templates_csv_action'] ) ) {
+            self::handle_templates_import();
+            return;
+        }
+
         if ( isset( $_REQUEST['tpmp_contact_maire_template_action'] ) || ( isset( $_GET['tpmp_action'] ) && 'delete_template' === $_GET['tpmp_action'] ) ) {
             self::handle_template_submission();
+            return;
+        }
+
+        if ( isset( $_POST['tpmp_forbidden_action'] ) ) {
+            self::handle_forbidden_words();
         }
     }
 
@@ -308,6 +357,69 @@ class TPMP_Contact_Maire {
                 add_settings_error( 'tpmp_contact_maire', 'tpmp_contact_maire_not_found', 'Commune introuvable.', 'error' );
             }
         }
+
+        self::redirect_with_notices();
+    }
+
+    /**
+     * Handle commune CSV import.
+     */
+    private static function handle_communes_import() {
+        check_admin_referer( 'tpmp_contact_maire_import_communes', 'tpmp_contact_maire_import_communes_nonce' );
+
+        if ( empty( $_FILES['tpmp_communes_csv']['tmp_name'] ) ) {
+            add_settings_error( 'tpmp_contact_maire', 'tpmp_contact_maire_no_commune_file', 'Aucun fichier CSV fourni pour les communes.', 'error' );
+            self::redirect_with_notices();
+        }
+
+        $rows = self::read_csv_file( $_FILES['tpmp_communes_csv']['tmp_name'] );
+        $count = 0;
+
+        $communes = get_option( self::OPTION_NAME, array() );
+
+        foreach ( $rows as $index => $row ) {
+            if ( $index === 0 && isset( $row[0] ) && isset( $row[1] ) ) {
+                $header_first  = strtolower( trim( (string) $row[0] ) );
+                $header_second = strtolower( trim( (string) $row[1] ) );
+
+                if ( in_array( $header_first, array( 'nom', 'name' ), true ) && in_array( $header_second, array( 'email' ), true ) ) {
+                    continue;
+                }
+            }
+
+            if ( empty( $row[0] ) || empty( $row[1] ) ) {
+                continue;
+            }
+
+            $label = sanitize_text_field( wp_unslash( $row[0] ) );
+            $email = sanitize_email( wp_unslash( $row[1] ) );
+
+            if ( empty( $label ) || empty( $email ) || ! is_email( $email ) ) {
+                continue;
+            }
+
+            $slug = self::slugify( $label );
+
+            if ( empty( $slug ) ) {
+                continue;
+            }
+
+            $communes[ $slug ] = array(
+                'label' => $label,
+                'email' => $email,
+            );
+
+            $count++;
+        }
+
+        update_option( self::OPTION_NAME, $communes );
+
+        add_settings_error(
+            'tpmp_contact_maire',
+            'tpmp_contact_maire_communes_imported',
+            sprintf( '%d communes importées.', $count ),
+            'updated'
+        );
 
         self::redirect_with_notices();
     }
@@ -358,6 +470,360 @@ class TPMP_Contact_Maire {
     }
 
     /**
+     * Handle templates CSV import.
+     */
+    private static function handle_templates_import() {
+        check_admin_referer( 'tpmp_contact_maire_import_templates', 'tpmp_contact_maire_import_templates_nonce' );
+
+        if ( empty( $_FILES['tpmp_templates_csv']['tmp_name'] ) ) {
+            add_settings_error( 'tpmp_contact_maire', 'tpmp_contact_maire_no_templates_file', 'Aucun fichier CSV fourni pour les modèles.', 'error' );
+            self::redirect_with_notices();
+        }
+
+        $rows = self::read_csv_file( $_FILES['tpmp_templates_csv']['tmp_name'] );
+
+        $existing_templates = get_option( self::TEMPLATES_OPTION, array() );
+        $templates_by_id    = array();
+
+        foreach ( $existing_templates as $key => $template ) {
+            $existing_id = isset( $template['id'] ) ? $template['id'] : $key;
+            if ( empty( $existing_id ) ) {
+                continue;
+            }
+
+            $templates_by_id[ $existing_id ] = array(
+                'id'       => $existing_id,
+                'label'    => isset( $template['label'] ) ? $template['label'] : '',
+                'category' => isset( $template['category'] ) ? $template['category'] : '',
+                'content'  => isset( $template['content'] ) ? $template['content'] : '',
+            );
+        }
+
+        $count = 0;
+
+        foreach ( $rows as $index => $row ) {
+            if ( $index === 0 && isset( $row[0], $row[1], $row[2] ) ) {
+                $headers = array(
+                    strtolower( trim( (string) $row[0] ) ),
+                    strtolower( trim( (string) $row[1] ) ),
+                    strtolower( trim( (string) $row[2] ) ),
+                );
+
+                if ( in_array( 'titre', $headers, true ) && ( in_array( 'catégorie', $headers, true ) || in_array( 'categorie', $headers, true ) ) ) {
+                    continue;
+                }
+            }
+
+            if ( empty( $row[0] ) || empty( $row[2] ) ) {
+                continue;
+            }
+
+            $title    = sanitize_text_field( wp_unslash( $row[0] ) );
+            $category = isset( $row[1] ) ? sanitize_text_field( wp_unslash( $row[1] ) ) : '';
+            $content  = wp_kses_post( wp_unslash( $row[2] ) );
+
+            if ( empty( $title ) || empty( $content ) ) {
+                continue;
+            }
+
+            $id = self::slugify( $title );
+
+            if ( empty( $id ) ) {
+                continue;
+            }
+
+            $templates_by_id[ $id ] = array(
+                'id'       => $id,
+                'label'    => $title,
+                'category' => $category,
+                'content'  => $content,
+            );
+
+            $count++;
+        }
+
+        update_option( self::TEMPLATES_OPTION, $templates_by_id );
+
+        add_settings_error(
+            'tpmp_contact_maire',
+            'tpmp_contact_maire_templates_imported',
+            sprintf( '%d modèles importés.', $count ),
+            'updated'
+        );
+
+        self::redirect_with_notices();
+    }
+
+    /**
+     * Handle forbidden words save and import.
+     */
+    private static function handle_forbidden_words() {
+        $action = isset( $_POST['tpmp_forbidden_action'] ) ? sanitize_text_field( wp_unslash( $_POST['tpmp_forbidden_action'] ) ) : '';
+
+        if ( 'save' === $action ) {
+            check_admin_referer( 'tpmp_contact_maire_save_forbidden', 'tpmp_contact_maire_save_forbidden_nonce' );
+
+            $raw_words = isset( $_POST['tpmp_forbidden_words'] ) ? (string) wp_unslash( $_POST['tpmp_forbidden_words'] ) : '';
+            $words     = array_filter( array_map( 'trim', preg_split( '/\r?\n/', $raw_words ) ), 'strlen' );
+
+            $cleaned = array();
+            foreach ( $words as $word ) {
+                $cleaned_word = sanitize_text_field( $word );
+                if ( '' === $cleaned_word ) {
+                    continue;
+                }
+                $lower = self::normalize_text( $cleaned_word );
+                $cleaned[ $lower ] = $cleaned_word;
+            }
+
+            update_option( self::FORBIDDEN_WORDS_OPTION, array_values( $cleaned ) );
+
+            add_settings_error( 'tpmp_contact_maire', 'tpmp_contact_maire_forbidden_saved', 'Mots interdits enregistrés.', 'updated' );
+            self::redirect_with_notices();
+        }
+
+        if ( 'import' === $action ) {
+            check_admin_referer( 'tpmp_contact_maire_import_forbidden', 'tpmp_contact_maire_import_forbidden_nonce' );
+
+            if ( empty( $_FILES['tpmp_forbidden_csv']['tmp_name'] ) ) {
+                add_settings_error( 'tpmp_contact_maire', 'tpmp_contact_maire_no_forbidden_file', 'Aucun fichier CSV fourni pour les mots interdits.', 'error' );
+                self::redirect_with_notices();
+            }
+
+            $rows = self::read_csv_file( $_FILES['tpmp_forbidden_csv']['tmp_name'] );
+            $existing = get_option( self::FORBIDDEN_WORDS_OPTION, array() );
+
+            $words = array();
+
+            foreach ( $existing as $word ) {
+                $normalized = self::normalize_text( $word );
+                if ( '' === $normalized ) {
+                    continue;
+                }
+                $words[ $normalized ] = $word;
+            }
+
+            $imported = 0;
+
+            foreach ( $rows as $row_index => $row ) {
+                if ( $row_index === 0 && isset( $row[0] ) ) {
+                    $header = strtolower( trim( (string) $row[0] ) );
+                    if ( in_array( $header, array( 'mot', 'mots' ), true ) && count( $row ) === 1 ) {
+                        continue;
+                    }
+                }
+
+                foreach ( $row as $value ) {
+                    $word = sanitize_text_field( wp_unslash( $value ) );
+                    $word = trim( $word );
+
+                    if ( '' === $word ) {
+                        continue;
+                    }
+
+                    $normalized = self::normalize_text( $word );
+
+                    if ( '' === $normalized || isset( $words[ $normalized ] ) ) {
+                        continue;
+                    }
+
+                    $words[ $normalized ] = $word;
+                    $imported++;
+                }
+            }
+
+            update_option( self::FORBIDDEN_WORDS_OPTION, array_values( $words ) );
+
+            add_settings_error(
+                'tpmp_contact_maire',
+                'tpmp_contact_maire_forbidden_imported',
+                sprintf( '%d mots interdits importés.', $imported ),
+                'updated'
+            );
+
+            self::redirect_with_notices();
+        }
+    }
+
+    /**
+     * Handle CSV exports for communes, templates and forbidden words.
+     */
+    private static function handle_exports() {
+        $type = isset( $_GET['tpmp_export'] ) ? sanitize_key( wp_unslash( $_GET['tpmp_export'] ) ) : '';
+
+        $nonce = isset( $_GET['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ) : '';
+
+        if ( ! wp_verify_nonce( $nonce, 'tpmp_contact_maire_export_' . $type ) ) {
+            wp_die( 'Nonce invalide.' );
+        }
+
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die( 'Permissions insuffisantes.' );
+        }
+
+        switch ( $type ) {
+            case 'communes':
+                self::export_communes();
+                break;
+            case 'templates':
+                self::export_templates();
+                break;
+            case 'forbidden':
+                self::export_forbidden_words();
+                break;
+            default:
+                wp_die( 'Export inconnu.' );
+        }
+    }
+
+    /**
+     * Export communes as CSV.
+     */
+    private static function export_communes() {
+        $communes = get_option( self::OPTION_NAME, array() );
+
+        self::send_csv_headers( 'tpmp-communes.csv' );
+        echo "Nom;Email\n";
+
+        foreach ( $communes as $commune ) {
+            $label = isset( $commune['label'] ) ? $commune['label'] : '';
+            $email = isset( $commune['email'] ) ? $commune['email'] : '';
+            echo sprintf( "%s;%s\n", $label, $email );
+        }
+
+        exit;
+    }
+
+    /**
+     * Export templates as CSV.
+     */
+    private static function export_templates() {
+        $templates = get_option( self::TEMPLATES_OPTION, array() );
+
+        self::send_csv_headers( 'tpmp-templates.csv' );
+        echo "Titre;Catégorie;Contenu\n";
+
+        foreach ( $templates as $template ) {
+            $label    = isset( $template['label'] ) ? $template['label'] : '';
+            $category = isset( $template['category'] ) ? $template['category'] : '';
+            $content  = isset( $template['content'] ) ? $template['content'] : '';
+
+            echo sprintf( "%s;%s;%s\n", $label, $category, str_replace( array( "\r", "\n" ), ' ', $content ) );
+        }
+
+        exit;
+    }
+
+    /**
+     * Export forbidden words as CSV.
+     */
+    private static function export_forbidden_words() {
+        $words = get_option( self::FORBIDDEN_WORDS_OPTION, array() );
+
+        self::send_csv_headers( 'tpmp-forbidden-words.csv' );
+        echo "Mot\n";
+
+        foreach ( $words as $word ) {
+            echo sprintf( "%s\n", $word );
+        }
+
+        exit;
+    }
+
+    /**
+     * Send CSV headers.
+     *
+     * @param string $filename File name.
+     */
+    private static function send_csv_headers( $filename ) {
+        header( 'Content-Type: text/csv; charset=utf-8' );
+        header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+    }
+
+    /**
+     * Read CSV file into array of rows.
+     *
+     * @param string $tmp_name Uploaded temporary file name.
+     *
+     * @return array
+     */
+    private static function read_csv_file( $tmp_name ) {
+        $rows = array();
+
+        if ( ! file_exists( $tmp_name ) ) {
+            return $rows;
+        }
+
+        $handle = fopen( $tmp_name, 'r' );
+
+        if ( false === $handle ) {
+            return $rows;
+        }
+
+        $first_line = fgets( $handle );
+        if ( false === $first_line ) {
+            fclose( $handle );
+            return $rows;
+        }
+
+        $delimiter = self::detect_csv_delimiter( $first_line );
+
+        $first_row = str_getcsv( $first_line, $delimiter );
+        $rows[]    = $first_row;
+
+        while ( ( $data = fgetcsv( $handle, 0, $delimiter ) ) !== false ) {
+            $rows[] = $data;
+        }
+
+        fclose( $handle );
+
+        return $rows;
+    }
+
+    /**
+     * Detect CSV delimiter from first line.
+     *
+     * @param string $line CSV line.
+     *
+     * @return string
+     */
+    private static function detect_csv_delimiter( $line ) {
+        $semicolon_count = substr_count( $line, ';' );
+        $comma_count     = substr_count( $line, ',' );
+
+        return ( $semicolon_count >= $comma_count ) ? ';' : ',';
+    }
+
+    /**
+     * Normalize text by removing accents and lowercasing.
+     *
+     * @param string $text Text to normalize.
+     *
+     * @return string
+     */
+    private static function normalize_text( $text ) {
+        $text = remove_accents( strtolower( $text ) );
+
+        return $text;
+    }
+
+    /**
+     * Slugify a string.
+     *
+     * @param string $text Text to slugify.
+     *
+     * @return string
+     */
+    private static function slugify( $text ) {
+        $text = remove_accents( strtolower( $text ) );
+        $text = preg_replace( '/[^a-z0-9\s-]/', '', $text );
+        $text = preg_replace( '/[\s-]+/', '-', $text );
+        $text = trim( $text, '-' );
+
+        return $text;
+    }
+
+    /**
      * Redirect back to the settings page with stored notices.
      */
     private static function redirect_with_notices() {
@@ -375,8 +841,42 @@ class TPMP_Contact_Maire {
             return;
         }
 
-        $communes = get_option( self::OPTION_NAME, array() );
-        $templates = get_option( self::TEMPLATES_OPTION, array() );
+        $communes        = get_option( self::OPTION_NAME, array() );
+        $templates       = get_option( self::TEMPLATES_OPTION, array() );
+        $forbidden_words = get_option( self::FORBIDDEN_WORDS_OPTION, array() );
+
+        $export_communes_url = wp_nonce_url(
+            add_query_arg(
+                array(
+                    'page'        => 'tpmp-contact-maire-settings',
+                    'tpmp_export' => 'communes',
+                ),
+                admin_url( 'options-general.php' )
+            ),
+            'tpmp_contact_maire_export_communes'
+        );
+
+        $export_templates_url = wp_nonce_url(
+            add_query_arg(
+                array(
+                    'page'        => 'tpmp-contact-maire-settings',
+                    'tpmp_export' => 'templates',
+                ),
+                admin_url( 'options-general.php' )
+            ),
+            'tpmp_contact_maire_export_templates'
+        );
+
+        $export_forbidden_url = wp_nonce_url(
+            add_query_arg(
+                array(
+                    'page'        => 'tpmp-contact-maire-settings',
+                    'tpmp_export' => 'forbidden',
+                ),
+                admin_url( 'options-general.php' )
+            ),
+            'tpmp_contact_maire_export_forbidden'
+        );
         ?>
         <div class="wrap">
             <h1>TPMP Contact Maire</h1>
@@ -423,9 +923,21 @@ class TPMP_Contact_Maire {
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </tbody>
-            </table>
+              </table>
 
-            <h2>Ajouter une commune</h2>
+              <p>
+                  <a class="button" href="<?php echo esc_url( $export_communes_url ); ?>">Exporter les communes (CSV)</a>
+              </p>
+
+              <h3>Importer des communes</h3>
+              <form method="post" enctype="multipart/form-data" action="<?php echo esc_url( admin_url( 'options-general.php?page=tpmp-contact-maire-settings' ) ); ?>">
+                  <?php wp_nonce_field( 'tpmp_contact_maire_import_communes', 'tpmp_contact_maire_import_communes_nonce' ); ?>
+                  <input type="hidden" name="tpmp_communes_csv_action" value="import" />
+                  <input type="file" name="tpmp_communes_csv" accept=".csv" />
+                  <?php submit_button( 'Importer les communes (CSV)', 'secondary', 'submit', false ); ?>
+              </form>
+
+              <h2>Ajouter une commune</h2>
             <form method="post" action="<?php echo esc_url( admin_url( 'options-general.php?page=tpmp-contact-maire-settings' ) ); ?>">
                 <?php wp_nonce_field( 'tpmp_contact_maire_manage_communes' ); ?>
                 <input type="hidden" name="tpmp_contact_maire_action" value="add" />
@@ -494,9 +1006,21 @@ class TPMP_Contact_Maire {
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </tbody>
-            </table>
+              </table>
 
-            <h2>Ajouter ou modifier un modèle</h2>
+              <p>
+                  <a class="button" href="<?php echo esc_url( $export_templates_url ); ?>">Exporter les modèles (CSV)</a>
+              </p>
+
+              <h3>Importer des modèles</h3>
+              <form method="post" enctype="multipart/form-data" action="<?php echo esc_url( admin_url( 'options-general.php?page=tpmp-contact-maire-settings' ) ); ?>">
+                  <?php wp_nonce_field( 'tpmp_contact_maire_import_templates', 'tpmp_contact_maire_import_templates_nonce' ); ?>
+                  <input type="hidden" name="tpmp_templates_csv_action" value="import" />
+                  <input type="file" name="tpmp_templates_csv" accept=".csv" />
+                  <?php submit_button( 'Importer les modèles (CSV)', 'secondary', 'submit', false ); ?>
+              </form>
+
+              <h2>Ajouter ou modifier un modèle</h2>
             <form method="post" action="<?php echo esc_url( admin_url( 'options-general.php?page=tpmp-contact-maire-settings' ) ); ?>">
                 <?php wp_nonce_field( 'tpmp_contact_maire_manage_templates', 'tpmp_contact_maire_templates_nonce' ); ?>
                 <input type="hidden" name="tpmp_contact_maire_template_action" value="add_template" />
@@ -523,6 +1047,34 @@ class TPMP_Contact_Maire {
                 </table>
 
                 <?php submit_button( 'Enregistrer le modèle' ); ?>
+            </form>
+
+            <h2>Mots interdits</h2>
+            <p>
+                <a class="button" href="<?php echo esc_url( $export_forbidden_url ); ?>">Exporter les mots interdits (CSV)</a>
+            </p>
+
+            <h3>Liste des mots interdits</h3>
+            <form method="post" action="<?php echo esc_url( admin_url( 'options-general.php?page=tpmp-contact-maire-settings' ) ); ?>">
+                <?php wp_nonce_field( 'tpmp_contact_maire_save_forbidden', 'tpmp_contact_maire_save_forbidden_nonce' ); ?>
+                <input type="hidden" name="tpmp_forbidden_action" value="save" />
+                <table class="form-table" role="presentation">
+                    <tbody>
+                        <tr>
+                            <th scope="row"><label for="tpmp_forbidden_words">Mots interdits (un par ligne)</label></th>
+                            <td><textarea name="tpmp_forbidden_words" id="tpmp_forbidden_words" rows="6" class="large-text"><?php echo esc_textarea( implode( "\n", $forbidden_words ) ); ?></textarea></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <?php submit_button( 'Enregistrer les mots interdits' ); ?>
+            </form>
+
+            <h3>Importer des mots interdits</h3>
+            <form method="post" enctype="multipart/form-data" action="<?php echo esc_url( admin_url( 'options-general.php?page=tpmp-contact-maire-settings' ) ); ?>">
+                <?php wp_nonce_field( 'tpmp_contact_maire_import_forbidden', 'tpmp_contact_maire_import_forbidden_nonce' ); ?>
+                <input type="hidden" name="tpmp_forbidden_action" value="import" />
+                <input type="file" name="tpmp_forbidden_csv" accept=".csv" />
+                <?php submit_button( 'Importer les mots (CSV)', 'secondary', 'submit', false ); ?>
             </form>
         </div>
         <?php
@@ -920,6 +1472,10 @@ array(
 
     if ( null === get_option( TPMP_Contact_Maire::TEMPLATES_OPTION, null ) ) {
         update_option( TPMP_Contact_Maire::TEMPLATES_OPTION, $default_templates );
+    }
+
+    if ( null === get_option( TPMP_Contact_Maire::FORBIDDEN_WORDS_OPTION, null ) ) {
+        update_option( TPMP_Contact_Maire::FORBIDDEN_WORDS_OPTION, array() );
     }
 }
 
