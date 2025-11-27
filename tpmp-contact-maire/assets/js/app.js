@@ -349,6 +349,7 @@
                 categorySelect: categorySelect,
                 templateSelect: templateSelect,
                 resetTemplateSelect: resetTemplateSelect,
+                categories: categories,
             });
         });
 
@@ -365,6 +366,7 @@
         var categorySelect = options.categorySelect;
         var templateSelect = options.templateSelect;
         var resetTemplateSelect = options.resetTemplateSelect;
+        var categories = Array.isArray(options.categories) ? options.categories : [];
 
         showFeedback(feedback, '', '');
 
@@ -397,12 +399,26 @@
         var originalSubmitText = submitButton.textContent;
         submitButton.textContent = 'Envoi en cours...';
 
+        var categorySlug = categorySelect && categorySelect.value ? categorySelect.value.trim() : '';
+        var categoryLabel = '';
+
+        if (categorySlug) {
+            for (var i = 0; i < categories.length; i++) {
+                if (categories[i].slug === categorySlug) {
+                    categoryLabel = categories[i].label;
+                    break;
+                }
+            }
+        }
+
         var payload = new URLSearchParams();
         payload.append('action', 'tpmp_contact_maire_send');
         payload.append('nonce', TPMP_CONTACT_MAIRE.nonce || '');
         payload.append('commune', commune);
         payload.append('email', email);
         payload.append('message', message);
+        payload.append('category', categorySlug);
+        payload.append('category_label', categoryLabel);
 
         fetch(TPMP_CONTACT_MAIRE.ajax_url, {
             method: 'POST',
