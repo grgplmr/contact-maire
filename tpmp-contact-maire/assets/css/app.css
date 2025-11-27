@@ -1,42 +1,47 @@
 #tpmp-contact-maire-root {
-    max-width: 700px;
+    max-width: 720px;
     margin: 0 auto;
     font-family: Arial, sans-serif;
 }
 
 .tpmp-contact-maire h3 {
-    margin-bottom: 16px;
+    margin-bottom: 1rem;
 }
 
-.tpmp-contact-maire__form {
+.tpmp-form {
     display: flex;
     flex-direction: column;
-    gap: 12px;
 }
 
 .tpmp-form-group {
-    display: flex;
-    flex-direction: column;
     margin-bottom: 1rem;
 }
 
 .tpmp-form-group label {
+    display: block;
     margin-bottom: 4px;
     font-weight: bold;
 }
 
-.tpmp-form-group input,
-.tpmp-form-group select,
-.tpmp-form-group textarea {
-    padding: 8px 10px;
+.tpmp-form select,
+.tpmp-form input[type="email"],
+.tpmp-form textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
     border: 1px solid #ccc;
     border-radius: 4px;
     font-size: 14px;
 }
 
-.tpmp-actions {
+.tpmp-form textarea {
+    resize: vertical;
+    min-height: 120px;
+}
+
+.tpmp-form-actions {
     display: flex;
-    gap: 10px;
+    gap: 0.75rem;
     align-items: center;
 }
 
@@ -50,17 +55,22 @@
     font-size: 15px;
 }
 
-.tpmp-contact-maire__submit:disabled,
-#tpmp-preview-button:disabled {
+.tpmp-contact-maire__submit:disabled {
     opacity: 0.7;
     cursor: not-allowed;
 }
 
+.tpmp-email-hint {
+    margin-top: 6px;
+    font-size: 0.9rem;
+    color: #555;
+}
+
 .tpmp-feedback {
     margin-top: 1rem;
-    padding: .75rem;
+    padding: 0.75rem;
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 0.9rem;
     min-height: 20px;
 }
 
@@ -77,33 +87,4 @@
 .tpmp-feedback-info {
     background: #eef2ff;
     border: 1px solid #5c6bc0;
-}
-
-.tpmp-modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, .5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 9999;
-}
-
-.tpmp-modal {
-    background: #fff;
-    max-width: 600px;
-    width: 90%;
-    padding: 1.5rem;
-    border-radius: 6px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, .2);
-}
-
-.tpmp-modal-actions {
-    margin-top: 1rem;
-    text-align: right;
-}
-
-.tpmp-preview-body {
-    white-space: pre-wrap;
-    line-height: 1.5;
 }
