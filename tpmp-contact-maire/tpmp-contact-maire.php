@@ -60,7 +60,10 @@ class TPMP_Contact_Maire {
         add_action( 'wp_ajax_tpmp_contact_maire_send', array( __CLASS__, 'handle_ajax' ) );
         add_action( 'wp_ajax_nopriv_tpmp_contact_maire_send', array( __CLASS__, 'handle_ajax' ) );
         add_action( 'admin_menu', array( __CLASS__, 'register_settings_page' ) );
+        add_action( 'admin_menu', array( __CLASS__, 'register_stats_page' ) );
         add_action( 'admin_init', array( __CLASS__, 'handle_form_submission' ) );
+        add_action( 'admin_init', array( __CLASS__, 'maybe_update_logs_table' ) );
+        add_action( 'admin_enqueue_scripts', array( __CLASS__, 'enqueue_admin_assets' ) );
     }
 
     /**
@@ -128,10 +131,12 @@ class TPMP_Contact_Maire {
             self::send_json_error( 'Nonce invalide.' );
         }
 
-        $commune_slug = isset( $_POST['commune'] ) ? sanitize_text_field( wp_unslash( $_POST['commune'] ) ) : '';
-        $email        = isset( $_POST['email'] ) ? sanitize_email( wp_unslash( $_POST['email'] ) ) : '';
-        $message      = isset( $_POST['message'] ) ? wp_strip_all_tags( wp_unslash( $_POST['message'] ) ) : '';
-        $sender_ip    = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : 'N/A';
+        $commune_slug    = isset( $_POST['commune'] ) ? sanitize_text_field( wp_unslash( $_POST['commune'] ) ) : '';
+        $email           = isset( $_POST['email'] ) ? sanitize_email( wp_unslash( $_POST['email'] ) ) : '';
+        $message         = isset( $_POST['message'] ) ? wp_strip_all_tags( wp_unslash( $_POST['message'] ) ) : '';
+        $category_raw    = isset( $_POST['category_label'] ) ? wp_unslash( $_POST['category_label'] ) : ( isset( $_POST['category'] ) ? wp_unslash( $_POST['category'] ) : '' );
+        $category_label  = sanitize_text_field( $category_raw );
+        $sender_ip       = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : 'N/A';
 
         if ( empty( $commune_slug ) || empty( $email ) || empty( $message ) ) {
             // Log incomplete attempts as errors to keep an audit trail of submissions.
@@ -141,6 +146,7 @@ class TPMP_Contact_Maire {
                 'sender_email'  => $email,
                 'sender_ip'     => $sender_ip,
                 'message'       => $message,
+                'category_label' => $category_label,
                 'status'        => 'error',
             ) );
 
@@ -154,6 +160,7 @@ class TPMP_Contact_Maire {
                 'sender_email'  => $email,
                 'sender_ip'     => $sender_ip,
                 'message'       => $message,
+                'category_label' => $category_label,
                 'status'        => 'error',
             ) );
 
@@ -169,6 +176,7 @@ class TPMP_Contact_Maire {
                 'sender_email'  => $email,
                 'sender_ip'     => $sender_ip,
                 'message'       => $message,
+                'category_label' => $category_label,
                 'status'        => 'error',
             ) );
 
@@ -185,6 +193,7 @@ class TPMP_Contact_Maire {
                 'sender_email'  => $email,
                 'sender_ip'     => $sender_ip,
                 'message'       => $message,
+                'category_label' => $category_label,
                 'status'        => 'error',
             ) );
 
@@ -206,12 +215,13 @@ class TPMP_Contact_Maire {
                 if ( false !== mb_strpos( $normalized_message, $normalized_word, 0, 'UTF-8' ) ) {
                     self::log_event( array(
                         'commune_slug'  => $commune_slug,
-                        'commune_label' => $commune_label,
-                        'sender_email'  => $email,
-                        'sender_ip'     => $sender_ip,
-                        'message'       => $message,
-                        'status'        => 'blocked',
-                    ) );
+                'commune_label' => $commune_label,
+                'sender_email'  => $email,
+                'sender_ip'     => $sender_ip,
+                'message'       => $message,
+                'category_label' => $category_label,
+                'status'        => 'blocked',
+            ) );
 
                     self::send_json_error( 'Votre message contient un terme non autorisé. Merci de le reformuler.' );
                 }
@@ -245,6 +255,7 @@ class TPMP_Contact_Maire {
             'sender_email'  => $email,
             'sender_ip'     => $sender_ip,
             'message'       => $message,
+            'category_label' => $category_label,
             'status'        => $status,
         ) );
 
@@ -337,6 +348,118 @@ class TPMP_Contact_Maire {
             'tpmp-contact-maire-settings',
             array( __CLASS__, 'render_settings_page' )
         );
+    }
+
+    /**
+     * Register the statistics page.
+     */
+    public static function register_stats_page() {
+        add_options_page(
+            'Statistiques TPMP Contact Maire',
+            'TPMP – Statistiques',
+            'manage_options',
+            'tpmp-contact-maire-stats',
+            array( __CLASS__, 'render_stats_page' )
+        );
+    }
+
+    /**
+     * Enqueue assets for the stats page.
+     *
+     * @param string $hook Current admin hook.
+     */
+    public static function enqueue_admin_assets( $hook ) {
+        if ( 'settings_page_tpmp-contact-maire-stats' !== $hook ) {
+            return;
+        }
+
+        $plugin_url = plugin_dir_url( __FILE__ );
+
+        wp_enqueue_style(
+            'tpmp-contact-maire-admin-stats',
+            $plugin_url . 'assets/css/admin-stats.css',
+            array(),
+            self::VERSION
+        );
+
+        wp_enqueue_script(
+            'chartjs',
+            'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js',
+            array(),
+            '4.4.1',
+            true
+        );
+
+        wp_enqueue_script(
+            'tpmp-contact-maire-admin-stats',
+            $plugin_url . 'assets/js/admin-stats.js',
+            array( 'chartjs' ),
+            self::VERSION,
+            true
+        );
+
+        wp_localize_script(
+            'tpmp-contact-maire-admin-stats',
+            'TPMP_CONTACT_MAIRE_STATS',
+            array(
+                'data' => tpmp_contact_maire_get_stats_data(),
+            )
+        );
+    }
+
+    /**
+     * Render the statistics dashboard page.
+     */
+    public static function render_stats_page() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            return;
+        }
+
+        $stats_data = tpmp_contact_maire_get_stats_data();
+        ?>
+        <div class="wrap tpmp-stats-wrap">
+            <h1>Statistiques TPMP Contact Maire</h1>
+            <p class="description">Données agrégées sur les 12 derniers mois. Focus sur les 30 derniers jours pour l'histogramme quotidien.</p>
+
+            <div class="tpmp-stats-grid">
+                <div class="tpmp-stats-card">
+                    <h2>Envois par jour (30 derniers jours)</h2>
+                    <canvas id="tpmp-stats-daily" aria-label="Envois par jour" role="img"></canvas>
+                </div>
+
+                <div class="tpmp-stats-card">
+                    <h2>Envois par commune (Top 10)</h2>
+                    <canvas id="tpmp-stats-by-commune" aria-label="Top des communes" role="img"></canvas>
+                </div>
+
+                <div class="tpmp-stats-card">
+                    <h2>Envois par catégorie (Top 10)</h2>
+                    <canvas id="tpmp-stats-by-category" aria-label="Top des catégories" role="img"></canvas>
+                </div>
+
+                <div class="tpmp-stats-card">
+                    <h2>Répartition par statut</h2>
+                    <canvas id="tpmp-stats-by-status" aria-label="Répartition des statuts" role="img"></canvas>
+                </div>
+
+                <div class="tpmp-stats-card tpmp-stats-card--full">
+                    <h2>Top 10 catégories (motifs)</h2>
+                    <ul id="tpmp-stats-top-categories" class="tpmp-stats-list">
+                        <?php if ( ! empty( $stats_data['top_categories'] ) ) : ?>
+                            <?php foreach ( $stats_data['top_categories'] as $category ) : ?>
+                                <li>
+                                    <span class="tpmp-stats-list__label"><?php echo esc_html( $category['label'] ); ?></span>
+                                    <span class="tpmp-stats-list__value"><?php echo esc_html( $category['total'] ); ?></span>
+                                </li>
+                            <?php endforeach; ?>
+                        <?php else : ?>
+                            <li>Aucune donnée disponible.</li>
+                        <?php endif; ?>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <?php
     }
 
     /**
@@ -867,7 +990,7 @@ class TPMP_Contact_Maire {
         $table_name = self::get_logs_table_name();
 
         self::send_csv_headers( 'tpmp-logs.csv' );
-        echo "ID;Date;Commune slug;Commune;Email expéditeur;IP;Statut;Message\n";
+        echo "ID;Date;Commune slug;Commune;Catégorie;Email expéditeur;IP;Statut;Message\n";
 
         $logs = $wpdb->get_results( "SELECT * FROM {$table_name} ORDER BY created_at DESC", ARRAY_A );
 
@@ -883,6 +1006,7 @@ class TPMP_Contact_Maire {
                         $log['created_at'],
                         $log['commune_slug'],
                         $log['commune_label'],
+                        isset( $log['category_label'] ) ? $log['category_label'] : '',
                         $log['sender_email'],
                         $log['sender_ip'],
                         $log['status'],
@@ -924,12 +1048,13 @@ class TPMP_Contact_Maire {
                 'created_at'    => current_time( 'mysql' ),
                 'commune_slug'  => isset( $data['commune_slug'] ) ? $data['commune_slug'] : '',
                 'commune_label' => isset( $data['commune_label'] ) ? $data['commune_label'] : '',
+                'category_label' => isset( $data['category_label'] ) ? $data['category_label'] : '',
                 'sender_email'  => isset( $data['sender_email'] ) ? $data['sender_email'] : '',
                 'sender_ip'     => isset( $data['sender_ip'] ) ? $data['sender_ip'] : '',
                 'message'       => isset( $data['message'] ) ? $data['message'] : '',
                 'status'        => isset( $data['status'] ) ? $data['status'] : 'sent',
             ),
-            array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+            array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
         );
 
         // Purge logs older than 1 year.
@@ -953,6 +1078,7 @@ class TPMP_Contact_Maire {
             created_at DATETIME NOT NULL,
             commune_slug VARCHAR(191) NOT NULL,
             commune_label VARCHAR(191) NOT NULL,
+            category_label VARCHAR(191) NOT NULL DEFAULT '',
             sender_email VARCHAR(191) NOT NULL,
             sender_ip VARCHAR(100) NOT NULL,
             message LONGTEXT NOT NULL,
@@ -960,6 +1086,7 @@ class TPMP_Contact_Maire {
             PRIMARY KEY  (id),
             KEY created_at (created_at),
             KEY commune_slug (commune_slug),
+            KEY category_label (category_label),
             KEY status (status)
         ) {$charset_collate};";
 
@@ -967,11 +1094,32 @@ class TPMP_Contact_Maire {
     }
 
     /**
+     * Ensure the logs table contains the category column.
+     */
+    public static function maybe_update_logs_table() {
+        global $wpdb;
+
+        $table_name = self::get_logs_table_name();
+
+        $table_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) );
+        if ( $table_exists !== $table_name ) {
+            self::create_logs_table();
+            return;
+        }
+
+        $has_category = $wpdb->get_var( $wpdb->prepare( "SHOW COLUMNS FROM {$table_name} LIKE %s", 'category_label' ) );
+
+        if ( ! $has_category ) {
+            $wpdb->query( "ALTER TABLE {$table_name} ADD COLUMN category_label VARCHAR(191) NOT NULL DEFAULT '' AFTER commune_label" );
+        }
+    }
+
+    /**
      * Get the fully-qualified logs table name.
      *
      * @return string
      */
-    private static function get_logs_table_name() {
+    public static function get_logs_table_name() {
         global $wpdb;
 
         return $wpdb->prefix . self::LOG_TABLE;
@@ -1347,6 +1495,140 @@ class TPMP_Contact_Maire {
 }
 
 TPMP_Contact_Maire::init();
+
+/**
+ * Compute aggregated stats for the dashboard.
+ *
+ * @return array
+ */
+function tpmp_contact_maire_get_stats_data() {
+    static $cached = null;
+
+    if ( null !== $cached ) {
+        return $cached;
+    }
+
+    global $wpdb;
+
+    $table_name = TPMP_Contact_Maire::get_logs_table_name();
+
+    // Daily stats for last 30 days (sent only).
+    $daily_rows = $wpdb->get_results(
+        "SELECT DATE(created_at) AS day, COUNT(*) AS total
+        FROM {$table_name}
+        WHERE created_at >= (NOW() - INTERVAL 30 DAY)
+          AND status = 'sent'
+        GROUP BY DATE(created_at)
+        ORDER BY day ASC",
+        ARRAY_A
+    );
+
+    $daily_map = array();
+    foreach ( $daily_rows as $row ) {
+        $daily_map[ $row['day'] ] = (int) $row['total'];
+    }
+
+    $daily_labels = array();
+    $daily_values = array();
+
+    $start_day = new DateTimeImmutable( 'today -29 days' );
+    for ( $i = 0; $i < 30; $i++ ) {
+        $current_day = $start_day->modify( '+' . $i . ' days' )->format( 'Y-m-d' );
+        $daily_labels[] = $current_day;
+        $daily_values[] = isset( $daily_map[ $current_day ] ) ? (int) $daily_map[ $current_day ] : 0;
+    }
+
+    // Top communes (sent, 12 months).
+    $commune_rows = $wpdb->get_results(
+        "SELECT commune_label, COUNT(*) AS total
+        FROM {$table_name}
+        WHERE created_at >= (NOW() - INTERVAL 365 DAY)
+          AND status = 'sent'
+        GROUP BY commune_label
+        ORDER BY total DESC
+        LIMIT 10",
+        ARRAY_A
+    );
+
+    $commune_labels = array();
+    $commune_values = array();
+    foreach ( $commune_rows as $row ) {
+        $commune_labels[] = $row['commune_label'];
+        $commune_values[] = (int) $row['total'];
+    }
+
+    // Top categories (sent, 12 months).
+    $category_rows = $wpdb->get_results(
+        "SELECT category_label, COUNT(*) AS total
+        FROM {$table_name}
+        WHERE created_at >= (NOW() - INTERVAL 365 DAY)
+          AND status = 'sent'
+          AND category_label <> ''
+        GROUP BY category_label
+        ORDER BY total DESC
+        LIMIT 10",
+        ARRAY_A
+    );
+
+    $category_labels = array();
+    $category_values = array();
+    foreach ( $category_rows as $row ) {
+        $category_labels[] = $row['category_label'];
+        $category_values[] = (int) $row['total'];
+    }
+
+    // Status distribution (12 months).
+    $status_rows = $wpdb->get_results(
+        "SELECT status, COUNT(*) AS total
+        FROM {$table_name}
+        WHERE created_at >= (NOW() - INTERVAL 365 DAY)
+        GROUP BY status",
+        ARRAY_A
+    );
+
+    $status_defaults = array(
+        'sent'    => 0,
+        'blocked' => 0,
+        'error'   => 0,
+    );
+
+    foreach ( $status_rows as $row ) {
+        $status = isset( $row['status'] ) ? $row['status'] : '';
+        if ( isset( $status_defaults[ $status ] ) ) {
+            $status_defaults[ $status ] = (int) $row['total'];
+        }
+    }
+
+    $cached = array(
+        'daily'         => array(
+            'labels' => $daily_labels,
+            'values' => $daily_values,
+        ),
+        'by_commune'    => array(
+            'labels' => $commune_labels,
+            'values' => $commune_values,
+        ),
+        'by_category'   => array(
+            'labels' => $category_labels,
+            'values' => $category_values,
+        ),
+        'status'        => array(
+            'labels' => array_keys( $status_defaults ),
+            'values' => array_values( $status_defaults ),
+        ),
+        'top_categories' => array_map(
+            function ( $row ) {
+                return array(
+                    'label' => $row['category_label'],
+                    'total' => (int) $row['total'],
+                );
+            },
+            $category_rows
+        ),
+    );
+
+    return $cached;
+}
 
 /**
  * Initialize plugin options on activation.
@@ -1744,6 +2026,7 @@ array(
     }
 
     TPMP_Contact_Maire::create_logs_table();
+    TPMP_Contact_Maire::maybe_update_logs_table();
 }
 
 register_activation_hook( __FILE__, 'tpmp_contact_maire_activate' );

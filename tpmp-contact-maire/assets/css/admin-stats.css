@@ -1,0 +1,52 @@
+.tpmp-stats-wrap {
+    max-width: 1200px;
+}
+
+.tpmp-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.tpmp-stats-card {
+    background: #fff;
+    border: 1px solid #e2e2e2;
+    border-radius: 6px;
+    padding: 16px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.tpmp-stats-card h2 {
+    margin-top: 0;
+    font-size: 16px;
+}
+
+.tpmp-stats-card--full {
+    grid-column: 1 / -1;
+}
+
+.tpmp-stats-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.tpmp-stats-list li {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.tpmp-stats-list li:last-child {
+    border-bottom: none;
+}
+
+.tpmp-stats-list__label {
+    font-weight: 600;
+}
+
+.tpmp-stats-list__value {
+    color: #555;
+}
