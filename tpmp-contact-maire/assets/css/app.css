@@ -1,5 +1,5 @@
 #tpmp-contact-maire-root {
-    max-width: 600px;
+    max-width: 700px;
     margin: 0 auto;
     font-family: Arial, sans-serif;
 }
@@ -14,23 +14,30 @@
     gap: 12px;
 }
 
-.tpmp-contact-maire__field {
+.tpmp-form-group {
     display: flex;
     flex-direction: column;
+    margin-bottom: 1rem;
 }
 
-.tpmp-contact-maire__field label {
+.tpmp-form-group label {
     margin-bottom: 4px;
     font-weight: bold;
 }
 
-.tpmp-contact-maire__field input,
-.tpmp-contact-maire__field select,
-.tpmp-contact-maire__field textarea {
+.tpmp-form-group input,
+.tpmp-form-group select,
+.tpmp-form-group textarea {
     padding: 8px 10px;
     border: 1px solid #ccc;
     border-radius: 4px;
     font-size: 14px;
+}
+
+.tpmp-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
 }
 
 .tpmp-contact-maire__submit {
@@ -43,20 +50,60 @@
     font-size: 15px;
 }
 
-.tpmp-contact-maire__submit:disabled {
+.tpmp-contact-maire__submit:disabled,
+#tpmp-preview-button:disabled {
     opacity: 0.7;
     cursor: not-allowed;
 }
 
-.tpmp-contact-maire__feedback {
-    min-height: 20px;
+.tpmp-feedback {
+    margin-top: 1rem;
+    padding: .75rem;
+    border-radius: 4px;
     font-size: 14px;
+    min-height: 20px;
 }
 
-.tpmp-contact-maire__feedback--error {
-    color: #c0392b;
+.tpmp-feedback-success {
+    background: #e6ffed;
+    border: 1px solid #2ecc71;
 }
 
-.tpmp-contact-maire__feedback--success {
-    color: #1f8b4c;
+.tpmp-feedback-error {
+    background: #ffe6e6;
+    border: 1px solid #e74c3c;
+}
+
+.tpmp-feedback-info {
+    background: #eef2ff;
+    border: 1px solid #5c6bc0;
+}
+
+.tpmp-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+.tpmp-modal {
+    background: #fff;
+    max-width: 600px;
+    width: 90%;
+    padding: 1.5rem;
+    border-radius: 6px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .2);
+}
+
+.tpmp-modal-actions {
+    margin-top: 1rem;
+    text-align: right;
+}
+
+.tpmp-preview-body {
+    white-space: pre-wrap;
+    line-height: 1.5;
 }
