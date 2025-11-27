@@ -27,6 +27,11 @@ class TPMP_Contact_Maire {
     const OPTION_NAME = 'tpmp_contact_maire_communes';
 
     /**
+     * Option name for storing templates.
+     */
+    const TEMPLATES_OPTION = 'tpmp_contact_maire_templates';
+
+    /**
      * Shortcode tag.
      */
     const SHORTCODE = 'tpmp_contact_maire';
@@ -86,6 +91,7 @@ class TPMP_Contact_Maire {
      */
     private static function enqueue_assets() {
         $communes = self::get_communes_for_front();
+        $templates = self::get_templates_for_front();
 
         wp_enqueue_style( 'tpmp-contact-maire-style' );
         wp_enqueue_script( 'tpmp-contact-maire-script' );
@@ -97,6 +103,7 @@ class TPMP_Contact_Maire {
                 'ajax_url' => admin_url( 'admin-ajax.php' ),
                 'nonce'    => wp_create_nonce( self::NONCE_ACTION ),
                 'communes' => $communes,
+                'templates' => $templates,
             )
         );
     }
@@ -205,6 +212,32 @@ class TPMP_Contact_Maire {
     }
 
     /**
+     * Get templates formatted for the front-end.
+     *
+     * @return array
+     */
+    private static function get_templates_for_front() {
+        $stored_templates = get_option( self::TEMPLATES_OPTION, array() );
+
+        $templates = array();
+
+        foreach ( $stored_templates as $template ) {
+            if ( empty( $template['id'] ) ) {
+                continue;
+            }
+
+            $templates[] = array(
+                'id'       => sanitize_key( $template['id'] ),
+                'label'    => isset( $template['label'] ) ? sanitize_text_field( $template['label'] ) : '',
+                'category' => isset( $template['category'] ) ? sanitize_text_field( $template['category'] ) : '',
+                'content'  => isset( $template['content'] ) ? wp_kses_post( $template['content'] ) : '',
+            );
+        }
+
+        return $templates;
+    }
+
+    /**
      * Register admin settings page.
      */
     public static function register_settings_page() {
@@ -221,17 +254,27 @@ class TPMP_Contact_Maire {
      * Handle form submission for settings page.
      */
     public static function handle_form_submission() {
-        if ( ! isset( $_REQUEST['tpmp_contact_maire_action'] ) ) {
-            return;
-        }
-
         if ( ! current_user_can( 'manage_options' ) ) {
             return;
         }
 
+        if ( isset( $_REQUEST['tpmp_contact_maire_action'] ) ) {
+            self::handle_commune_submission();
+            return;
+        }
+
+        if ( isset( $_REQUEST['tpmp_contact_maire_template_action'] ) || ( isset( $_GET['tpmp_action'] ) && 'delete_template' === $_GET['tpmp_action'] ) ) {
+            self::handle_template_submission();
+        }
+    }
+
+    /**
+     * Handle commune form submission.
+     */
+    private static function handle_commune_submission() {
         check_admin_referer( 'tpmp_contact_maire_manage_communes' );
 
-        $action   = sanitize_text_field( wp_unslash( $_REQUEST['tpmp_contact_maire_action'] ) );
+        $action   = isset( $_REQUEST['tpmp_contact_maire_action'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['tpmp_contact_maire_action'] ) ) : '';
         $communes = get_option( self::OPTION_NAME, array() );
 
         if ( 'add' === $action ) {
@@ -266,6 +309,58 @@ class TPMP_Contact_Maire {
             }
         }
 
+        self::redirect_with_notices();
+    }
+
+    /**
+     * Handle template form submission.
+     */
+    private static function handle_template_submission() {
+        check_admin_referer( 'tpmp_contact_maire_manage_templates', 'tpmp_contact_maire_templates_nonce' );
+
+        $action    = isset( $_REQUEST['tpmp_contact_maire_template_action'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['tpmp_contact_maire_template_action'] ) ) : '';
+        $templates = get_option( self::TEMPLATES_OPTION, array() );
+
+        if ( 'add_template' === $action ) {
+            $template_id    = isset( $_POST['tpmp_template_id'] ) ? sanitize_key( wp_unslash( $_POST['tpmp_template_id'] ) ) : '';
+            $template_label = isset( $_POST['tpmp_template_label'] ) ? sanitize_text_field( wp_unslash( $_POST['tpmp_template_label'] ) ) : '';
+            $template_cat   = isset( $_POST['tpmp_template_category'] ) ? sanitize_text_field( wp_unslash( $_POST['tpmp_template_category'] ) ) : '';
+            $template_body  = isset( $_POST['tpmp_template_content'] ) ? wp_kses_post( wp_unslash( $_POST['tpmp_template_content'] ) ) : '';
+
+            if ( empty( $template_id ) || empty( $template_label ) || empty( $template_body ) ) {
+                add_settings_error( 'tpmp_contact_maire', 'tpmp_contact_maire_template_missing_fields', 'Veuillez renseigner l\'ID, le titre et le contenu du modèle.', 'error' );
+            } else {
+                $templates[ $template_id ] = array(
+                    'id'       => $template_id,
+                    'label'    => $template_label,
+                    'category' => $template_cat,
+                    'content'  => $template_body,
+                );
+
+                update_option( self::TEMPLATES_OPTION, $templates );
+                add_settings_error( 'tpmp_contact_maire', 'tpmp_contact_maire_template_saved', 'Modèle enregistré avec succès.', 'updated' );
+            }
+        }
+
+        if ( ( isset( $_GET['tpmp_action'] ) && 'delete_template' === $_GET['tpmp_action'] ) && isset( $_GET['template_id'] ) ) {
+            $template_id = sanitize_key( wp_unslash( $_GET['template_id'] ) );
+
+            if ( isset( $templates[ $template_id ] ) ) {
+                unset( $templates[ $template_id ] );
+                update_option( self::TEMPLATES_OPTION, $templates );
+                add_settings_error( 'tpmp_contact_maire', 'tpmp_contact_maire_template_deleted', 'Modèle supprimé avec succès.', 'updated' );
+            } else {
+                add_settings_error( 'tpmp_contact_maire', 'tpmp_contact_maire_template_not_found', 'Modèle introuvable.', 'error' );
+            }
+        }
+
+        self::redirect_with_notices();
+    }
+
+    /**
+     * Redirect back to the settings page with stored notices.
+     */
+    private static function redirect_with_notices() {
         set_transient( 'settings_errors', get_settings_errors( 'tpmp_contact_maire' ), 30 );
 
         wp_redirect( add_query_arg( array( 'page' => 'tpmp-contact-maire-settings' ), admin_url( 'options-general.php' ) ) );
@@ -281,6 +376,7 @@ class TPMP_Contact_Maire {
         }
 
         $communes = get_option( self::OPTION_NAME, array() );
+        $templates = get_option( self::TEMPLATES_OPTION, array() );
         ?>
         <div class="wrap">
             <h1>TPMP Contact Maire</h1>
@@ -353,6 +449,81 @@ class TPMP_Contact_Maire {
 
                 <?php submit_button( 'Ajouter la commune' ); ?>
             </form>
+
+            <h2>Modèles de messages</h2>
+            <table class="widefat fixed" cellspacing="0">
+                <thead>
+                    <tr>
+                        <th scope="col">ID</th>
+                        <th scope="col">Titre</th>
+                        <th scope="col">Catégorie</th>
+                        <th scope="col">Aperçu</th>
+                        <th scope="col">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if ( empty( $templates ) ) : ?>
+                        <tr>
+                            <td colspan="5">Aucun modèle enregistré.</td>
+                        </tr>
+                    <?php else : ?>
+                        <?php foreach ( $templates as $template_id => $template ) : ?>
+                            <tr>
+                                <td><?php echo esc_html( isset( $template['id'] ) ? $template['id'] : $template_id ); ?></td>
+                                <td><?php echo esc_html( isset( $template['label'] ) ? $template['label'] : '' ); ?></td>
+                                <td><?php echo esc_html( isset( $template['category'] ) ? $template['category'] : '' ); ?></td>
+                                <td><?php echo esc_html( isset( $template['content'] ) ? wp_html_excerpt( wp_strip_all_tags( $template['content'] ), 80, '…' ) : '' ); ?></td>
+                                <td>
+                                    <?php
+                                    $delete_url = wp_nonce_url(
+                                        add_query_arg(
+                                            array(
+                                                'page'                       => 'tpmp-contact-maire-settings',
+                                                'tpmp_action'                => 'delete_template',
+                                                'template_id'                => isset( $template['id'] ) ? $template['id'] : $template_id,
+                                            ),
+                                            admin_url( 'options-general.php' )
+                                        ),
+                                        'tpmp_contact_maire_manage_templates',
+                                        'tpmp_contact_maire_templates_nonce'
+                                    );
+                                    ?>
+                                    <a href="<?php echo esc_url( $delete_url ); ?>" class="button button-small">Supprimer</a>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+
+            <h2>Ajouter ou modifier un modèle</h2>
+            <form method="post" action="<?php echo esc_url( admin_url( 'options-general.php?page=tpmp-contact-maire-settings' ) ); ?>">
+                <?php wp_nonce_field( 'tpmp_contact_maire_manage_templates', 'tpmp_contact_maire_templates_nonce' ); ?>
+                <input type="hidden" name="tpmp_contact_maire_template_action" value="add_template" />
+
+                <table class="form-table" role="presentation">
+                    <tbody>
+                        <tr>
+                            <th scope="row"><label for="tpmp_template_id">ID du modèle</label></th>
+                            <td><input name="tpmp_template_id" type="text" id="tpmp_template_id" value="" class="regular-text" required /></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="tpmp_template_label">Titre du modèle</label></th>
+                            <td><input name="tpmp_template_label" type="text" id="tpmp_template_label" value="" class="regular-text" required /></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="tpmp_template_category">Catégorie</label></th>
+                            <td><input name="tpmp_template_category" type="text" id="tpmp_template_category" value="" class="regular-text" /></td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><label for="tpmp_template_content">Contenu du message</label></th>
+                            <td><textarea name="tpmp_template_content" id="tpmp_template_content" rows="5" class="large-text" required></textarea></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <?php submit_button( 'Enregistrer le modèle' ); ?>
+            </form>
         </div>
         <?php
     }
@@ -379,8 +550,33 @@ function tpmp_contact_maire_activate() {
         ),
     );
 
+    $default_templates = array(
+        'modele_general_1' => array(
+            'id'       => 'modele_general_1',
+            'label'    => 'Message général - inquiétudes sur la réforme',
+            'category' => 'Général',
+            'content'  => "Bonjour,\n\nEn tant qu'habitant de la commune, je souhaite partager mes inquiétudes concernant la réforme en cours. Pourriez-vous m'indiquer comment la mairie accompagne les habitants et quelles informations seront diffusées ?\n\nMerci pour votre retour,\nCordialement,",
+        ),
+        'personnes_agees_1' => array(
+            'id'       => 'personnes_agees_1',
+            'label'    => 'Soutien aux personnes âgées',
+            'category' => 'Solidarité',
+            'content'  => "Madame, Monsieur,\n\nJe souhaite attirer votre attention sur la situation des personnes âgées isolées de notre commune. Serait-il possible de renforcer les dispositifs d'accompagnement ou d'organiser une réunion d'information ?\n\nMerci par avance,\nBien cordialement,",
+        ),
+        'transport_urbain_1' => array(
+            'id'       => 'transport_urbain_1',
+            'label'    => 'Mobilité et transports',
+            'category' => 'Mobilité',
+            'content'  => "Bonjour,\n\nLes questions de mobilité sont au cœur du quotidien des habitants. Pourriez-vous préciser les prochaines étapes concernant les transports en commun et les aménagements cyclables prévus ?\n\nMerci pour votre implication,\nCordialement,",
+        ),
+    );
+
     if ( ! get_option( TPMP_Contact_Maire::OPTION_NAME ) ) {
         add_option( TPMP_Contact_Maire::OPTION_NAME, $default_communes );
+    }
+
+    if ( ! get_option( TPMP_Contact_Maire::TEMPLATES_OPTION ) ) {
+        add_option( TPMP_Contact_Maire::TEMPLATES_OPTION, $default_templates );
     }
 }
 

@@ -9,7 +9,7 @@
         }
     }
 
-    function renderForm(root, communes) {
+    function renderForm(root, communes, templates) {
         var formContainer = document.createElement('div');
         formContainer.className = 'tpmp-contact-maire';
 
@@ -66,6 +66,42 @@
 
         form.appendChild(emailField);
 
+        // Template select.
+        var templateField = document.createElement('div');
+        templateField.className = 'tpmp-contact-maire__field';
+
+        var templateLabel = document.createElement('label');
+        templateLabel.textContent = 'Modèle de message';
+        templateLabel.setAttribute('for', 'tpmp-template');
+        templateField.appendChild(templateLabel);
+
+        var templateSelect = document.createElement('select');
+        templateSelect.name = 'template';
+        templateSelect.id = 'tpmp-template';
+
+        var defaultTemplateOption = document.createElement('option');
+        defaultTemplateOption.value = '';
+        defaultTemplateOption.textContent = 'Choisissez un modèle (facultatif)';
+        templateSelect.appendChild(defaultTemplateOption);
+
+        templates.forEach(function (template) {
+            if (!template || !template.id) {
+                return;
+            }
+
+            var option = document.createElement('option');
+            option.value = template.id;
+
+            var label = template.label || template.id;
+            var category = template.category || '';
+            option.textContent = category ? category + ' - ' + label : label;
+
+            templateSelect.appendChild(option);
+        });
+
+        templateField.appendChild(templateSelect);
+        form.appendChild(templateField);
+
         // Message textarea.
         var messageField = document.createElement('div');
         messageField.className = 'tpmp-contact-maire__field';
@@ -93,6 +129,23 @@
         var feedback = document.createElement('div');
         feedback.className = 'tpmp-contact-maire__feedback';
         form.appendChild(feedback);
+
+        templateSelect.addEventListener('change', function (event) {
+            var selectedId = event.target.value;
+
+            if (!selectedId) {
+                return;
+            }
+
+            var matchedTemplate = templates.find(function (template) {
+                return template.id === selectedId;
+            });
+
+            if (matchedTemplate && matchedTemplate.content) {
+                // Replace the current content to ensure the textarea mirrors the chosen template.
+                messageInput.value = matchedTemplate.content;
+            }
+        });
 
         form.addEventListener('submit', function (event) {
             event.preventDefault();
@@ -198,10 +251,9 @@
             return;
         }
 
-        var communes = Array.isArray(TPMP_CONTACT_MAIRE.communes)
-            ? TPMP_CONTACT_MAIRE.communes
-            : [];
+        var communes = Array.isArray(TPMP_CONTACT_MAIRE.communes) ? TPMP_CONTACT_MAIRE.communes : [];
+        var templates = Array.isArray(TPMP_CONTACT_MAIRE.templates) ? TPMP_CONTACT_MAIRE.templates : [];
 
-        renderForm(root, communes);
+        renderForm(root, communes, templates);
     });
 })();
