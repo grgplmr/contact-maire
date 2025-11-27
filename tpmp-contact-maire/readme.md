@@ -11,10 +11,7 @@ Plugin WordPress permettant d'afficher un formulaire via le shortcode `[tpmp_con
 - Le shortcode génère un conteneur qui accueille le formulaire rendu par le script `assets/js/app.js`.
 - Les styles de base sont définis dans `assets/css/app.css`.
 - L'envoi s'effectue via AJAX vers `admin-ajax.php` avec vérification d'un nonce.
-- Les adresses email des mairies sont pour l'instant définies en dur dans `tpmp-contact-maire.php`.
-
-## Personnalisation
-- Ajoutez ou modifiez les communes dans le tableau `$mairies` ainsi que dans la liste localisée `$communes` dans `tpmp-contact-maire.php`.
+- La liste des communes est gérée depuis la page de réglages **Réglages > TPMP Contact Maire**. Vous pouvez y ajouter ou supprimer des communes en indiquant leur slug, nom complet et email mairie.
 
 ## Auteur
 Christian Auzolat

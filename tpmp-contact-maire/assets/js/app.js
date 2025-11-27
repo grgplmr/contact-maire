@@ -200,11 +200,7 @@
 
         var communes = Array.isArray(TPMP_CONTACT_MAIRE.communes)
             ? TPMP_CONTACT_MAIRE.communes
-            : [
-                  { slug: 'paris', label: 'Paris' },
-                  { slug: 'marseille', label: 'Marseille' },
-                  { slug: 'lyon', label: 'Lyon' },
-              ];
+            : [];
 
         renderForm(root, communes);
     });
