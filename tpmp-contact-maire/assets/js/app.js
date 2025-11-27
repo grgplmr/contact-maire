@@ -24,8 +24,12 @@
         var categories = [];
         var seen = {};
 
+        if (!Array.isArray(templates)) {
+            return categories;
+        }
+
         templates.forEach(function (template) {
-            if (!template) {
+            if (!template || !template.category) {
                 return;
             }
 
@@ -35,7 +39,6 @@
             }
 
             var slug = slugifyCategory(label);
-
             if (!slug || seen[slug]) {
                 return;
             }
@@ -60,57 +63,60 @@
         }
     }
 
-    function createPreviewModal() {
-        var overlay = document.createElement('div');
-        overlay.id = 'tpmp-preview-overlay';
-        overlay.className = 'tpmp-modal-overlay';
-        overlay.style.display = 'none';
+    function buildTemplatePreview(template) {
+        var text = '';
 
-        var modal = document.createElement('div');
-        modal.className = 'tpmp-modal';
+        if (template && template.content) {
+            text = template.content;
+        } else if (template && template.label) {
+            text = template.label;
+        } else if (template && template.id) {
+            text = template.id;
+        }
 
-        var title = document.createElement('h2');
-        title.textContent = 'Prévisualisation de votre message';
-        modal.appendChild(title);
+        text = text ? text.toString().trim() : '';
+        if (!text) {
+            return '';
+        }
 
-        var communeLine = document.createElement('p');
-        communeLine.innerHTML = '<strong>Commune :</strong> <span id="tpmp-preview-commune"></span>';
-        modal.appendChild(communeLine);
+        var cleaned = text.replace(/\s+/g, ' ');
+        if (cleaned.length > 90) {
+            return cleaned.slice(0, 90).trimEnd() + '…';
+        }
 
-        var emailLine = document.createElement('p');
-        emailLine.innerHTML = '<strong>Adresse de réponse :</strong> <span id="tpmp-preview-email"></span>';
-        modal.appendChild(emailLine);
-
-        var separator = document.createElement('hr');
-        modal.appendChild(separator);
-
-        var body = document.createElement('div');
-        body.className = 'tpmp-preview-body';
-        modal.appendChild(body);
-
-        var actions = document.createElement('div');
-        actions.className = 'tpmp-modal-actions';
-
-        var closeButton = document.createElement('button');
-        closeButton.type = 'button';
-        closeButton.className = 'tpmp-preview-close';
-        closeButton.textContent = 'Fermer';
-        actions.appendChild(closeButton);
-
-        modal.appendChild(actions);
-        overlay.appendChild(modal);
-
-        return {
-            overlay: overlay,
-            modal: modal,
-            body: body,
-            closeButton: closeButton,
-            communeSpan: communeLine.querySelector('#tpmp-preview-commune'),
-            emailSpan: emailLine.querySelector('#tpmp-preview-email'),
-        };
+        return cleaned;
     }
 
     function renderForm(root, communes, templates) {
+        var categories = getCategoriesFromTemplates(templates);
+        var templatesByCategory = {};
+        var templatesIndex = {};
+
+        if (Array.isArray(templates)) {
+            templates.forEach(function (template) {
+                if (!template || !template.id || !template.category) {
+                    return;
+                }
+
+                var categoryLabel = template.category && template.category.trim() ? template.category.trim() : '';
+                if (!categoryLabel) {
+                    return;
+                }
+
+                var slug = slugifyCategory(categoryLabel);
+                if (!slug) {
+                    return;
+                }
+
+                if (!templatesByCategory[slug]) {
+                    templatesByCategory[slug] = [];
+                }
+
+                templatesByCategory[slug].push(template);
+                templatesIndex[template.id] = template;
+            });
+        }
+
         var formContainer = document.createElement('div');
         formContainer.className = 'tpmp-contact-maire';
 
@@ -119,13 +125,7 @@
         formContainer.appendChild(title);
 
         var form = document.createElement('form');
-        form.className = 'tpmp-contact-maire__form';
-
-        var feedback = document.createElement('div');
-        feedback.id = 'tpmp-feedback';
-        feedback.className = 'tpmp-feedback';
-        feedback.setAttribute('aria-live', 'polite');
-        form.appendChild(feedback);
+        form.className = 'tpmp-form';
 
         // Commune select.
         var communeField = document.createElement('div');
@@ -142,10 +142,10 @@
         select.required = true;
         select.setAttribute('aria-required', 'true');
 
-        var defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = 'Choisissez votre commune';
-        select.appendChild(defaultOption);
+        var defaultCommuneOption = document.createElement('option');
+        defaultCommuneOption.value = '';
+        defaultCommuneOption.textContent = 'Choisissez votre commune';
+        select.appendChild(defaultCommuneOption);
 
         communes.forEach(function (commune) {
             var option = document.createElement('option');
@@ -195,38 +195,7 @@
         categorySelect.name = 'category';
         categorySelect.id = 'tpmp-category-select';
 
-        var categories = getCategoriesFromTemplates(templates);
-        var templatesByCategory = {};
-        var templatesIndex = {};
-
-        templates.forEach(function (template) {
-            if (!template || !template.id) {
-                return;
-            }
-
-            var category = template.category && template.category.trim() ? template.category.trim() : 'Autre';
-            var slug = slugifyCategory(category);
-            if (!slug) {
-                slug = 'autre';
-            }
-
-            if (!templatesByCategory[slug]) {
-                templatesByCategory[slug] = [];
-            }
-
-            templatesByCategory[slug].push(template);
-            templatesIndex[template.id] = template;
-
-            if (!categories.some(function (cat) { return cat.slug === slug; })) {
-                categories.push({ slug: slug, label: category });
-            }
-        });
-
         if (!categories.length) {
-            categorySelect.disabled = true;
-            while (categorySelect.firstChild) {
-                categorySelect.removeChild(categorySelect.firstChild);
-            }
             var noCategoryOption = document.createElement('option');
             noCategoryOption.value = '';
             noCategoryOption.textContent = 'Aucune catégorie disponible';
@@ -286,13 +255,7 @@
 
         // Actions.
         var actionsWrapper = document.createElement('div');
-        actionsWrapper.className = 'tpmp-actions';
-
-        var previewButton = document.createElement('button');
-        previewButton.type = 'button';
-        previewButton.id = 'tpmp-preview-button';
-        previewButton.textContent = 'Prévisualiser le message';
-        actionsWrapper.appendChild(previewButton);
+        actionsWrapper.className = 'tpmp-form-group tpmp-form-actions';
 
         var submitButton = document.createElement('button');
         submitButton.type = 'submit';
@@ -302,8 +265,11 @@
 
         form.appendChild(actionsWrapper);
 
-        var previewModal = createPreviewModal();
-        document.body.appendChild(previewModal.overlay);
+        var feedback = document.createElement('div');
+        feedback.id = 'tpmp-feedback';
+        feedback.className = 'tpmp-feedback';
+        feedback.setAttribute('aria-live', 'polite');
+        form.appendChild(feedback);
 
         function resetTemplateSelect(showCategoryPrompt) {
             if (typeof showCategoryPrompt === 'undefined') {
@@ -339,11 +305,8 @@
             templatesByCategory[slug].forEach(function (template) {
                 var option = document.createElement('option');
                 option.value = template.id;
-                var label = template.label && template.label.trim() ? template.label.trim() : template.id;
-                if (!label && template.content) {
-                    label = template.content.substring(0, 20) + '...';
-                }
-                option.textContent = label;
+                var previewLabel = buildTemplatePreview(template);
+                option.textContent = previewLabel || template.id;
                 templateSelect.appendChild(option);
             });
         }
@@ -352,7 +315,14 @@
 
         categorySelect.addEventListener('change', function (event) {
             var selectedCategory = event.target.value;
+            if (!selectedCategory) {
+                resetTemplateSelect(true);
+                messageInput.value = '';
+                return;
+            }
+
             populateTemplateSelect(selectedCategory);
+            messageInput.value = '';
         });
 
         templateSelect.addEventListener('change', function (event) {
@@ -362,41 +332,9 @@
             }
 
             var matchedTemplate = templatesIndex[selectedId];
-            if (matchedTemplate && matchedTemplate.content) {
-                // Overwrite the textarea content with the chosen template for simplicity.
+            if (matchedTemplate && typeof matchedTemplate.content === 'string') {
+                // Replace the entire textarea content with the selected template.
                 messageInput.value = matchedTemplate.content;
-            }
-        });
-
-        function openPreview() {
-            var commune = select.value.trim();
-            var communeLabel = '';
-            if (commune) {
-                var communeOption = select.querySelector('option[value="' + commune + '"]');
-                communeLabel = communeOption ? communeOption.textContent : commune;
-            }
-            var email = emailInput.value.trim();
-            var message = messageInput.value.trim();
-
-            if (!commune || !email || !message) {
-                showFeedback(feedback, 'Veuillez renseigner la commune, votre email et le message avant de prévisualiser.', 'error');
-                return;
-            }
-
-            previewModal.communeSpan.textContent = communeLabel;
-            previewModal.emailSpan.textContent = email;
-            previewModal.body.innerHTML = message.replace(/\n/g, '<br>');
-
-            previewModal.overlay.style.display = 'flex';
-        }
-
-        previewButton.addEventListener('click', openPreview);
-        previewModal.closeButton.addEventListener('click', function () {
-            previewModal.overlay.style.display = 'none';
-        });
-        previewModal.overlay.addEventListener('click', function (event) {
-            if (event.target === previewModal.overlay) {
-                previewModal.overlay.style.display = 'none';
             }
         });
 
@@ -408,7 +346,6 @@
                 messageInput: messageInput,
                 feedback: feedback,
                 submitButton: submitButton,
-                previewButton: previewButton,
                 categorySelect: categorySelect,
                 templateSelect: templateSelect,
                 resetTemplateSelect: resetTemplateSelect,
@@ -425,7 +362,6 @@
         var messageInput = options.messageInput;
         var feedback = options.feedback;
         var submitButton = options.submitButton;
-        var previewButton = options.previewButton;
         var categorySelect = options.categorySelect;
         var templateSelect = options.templateSelect;
         var resetTemplateSelect = options.resetTemplateSelect;
@@ -458,7 +394,6 @@
         }
 
         submitButton.disabled = true;
-        previewButton.disabled = true;
         var originalSubmitText = submitButton.textContent;
         submitButton.textContent = 'Envoi en cours...';
 
@@ -501,7 +436,6 @@
             })
             .finally(function () {
                 submitButton.disabled = false;
-                previewButton.disabled = false;
                 submitButton.textContent = originalSubmitText;
             });
     }
