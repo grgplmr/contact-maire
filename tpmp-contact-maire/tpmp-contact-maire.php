@@ -37,6 +37,11 @@ class TPMP_Contact_Maire {
     const FORBIDDEN_WORDS_OPTION = 'tpmp_contact_maire_forbidden_words';
 
     /**
+     * Log table name suffix.
+     */
+    const LOG_TABLE = 'tpmp_contact_logs';
+
+    /**
      * Shortcode tag.
      */
     const SHORTCODE = 'tpmp_contact_maire';
@@ -123,28 +128,66 @@ class TPMP_Contact_Maire {
             self::send_json_error( 'Nonce invalide.' );
         }
 
-        $commune = isset( $_POST['commune'] ) ? sanitize_text_field( wp_unslash( $_POST['commune'] ) ) : '';
-        $email   = isset( $_POST['email'] ) ? sanitize_email( wp_unslash( $_POST['email'] ) ) : '';
-        $message = isset( $_POST['message'] ) ? wp_strip_all_tags( wp_unslash( $_POST['message'] ) ) : '';
+        $commune_slug = isset( $_POST['commune'] ) ? sanitize_text_field( wp_unslash( $_POST['commune'] ) ) : '';
+        $email        = isset( $_POST['email'] ) ? sanitize_email( wp_unslash( $_POST['email'] ) ) : '';
+        $message      = isset( $_POST['message'] ) ? wp_strip_all_tags( wp_unslash( $_POST['message'] ) ) : '';
+        $sender_ip    = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : 'N/A';
 
-        if ( empty( $commune ) || empty( $email ) || empty( $message ) ) {
-            self::send_json_error( 'Tous les champs sont obligatoires.' );
+        if ( empty( $commune_slug ) || empty( $email ) || empty( $message ) ) {
+            // Log incomplete attempts as errors to keep an audit trail of submissions.
+            self::log_event( array(
+                'commune_slug'  => $commune_slug,
+                'commune_label' => '',
+                'sender_email'  => $email,
+                'sender_ip'     => $sender_ip,
+                'message'       => $message,
+                'status'        => 'error',
+            ) );
+
+            self::send_json_error( 'Tous les champs sont obligatoires (commune, email, message).' );
         }
 
         if ( ! is_email( $email ) ) {
+            self::log_event( array(
+                'commune_slug'  => $commune_slug,
+                'commune_label' => '',
+                'sender_email'  => $email,
+                'sender_ip'     => $sender_ip,
+                'message'       => $message,
+                'status'        => 'error',
+            ) );
+
             self::send_json_error( "L'adresse email n'est pas valide." );
         }
 
         $mairies = get_option( self::OPTION_NAME, array() );
 
-        if ( ! isset( $mairies[ $commune ] ) ) {
+        if ( ! isset( $mairies[ $commune_slug ] ) ) {
+            self::log_event( array(
+                'commune_slug'  => $commune_slug,
+                'commune_label' => '',
+                'sender_email'  => $email,
+                'sender_ip'     => $sender_ip,
+                'message'       => $message,
+                'status'        => 'error',
+            ) );
+
             self::send_json_error( 'Commune inconnue.' );
         }
 
-        $commune_label = isset( $mairies[ $commune ]['label'] ) ? $mairies[ $commune ]['label'] : ucfirst( $commune );
-        $to            = isset( $mairies[ $commune ]['email'] ) ? $mairies[ $commune ]['email'] : '';
+        $commune_label = isset( $mairies[ $commune_slug ]['label'] ) ? $mairies[ $commune_slug ]['label'] : ucfirst( $commune_slug );
+        $to            = isset( $mairies[ $commune_slug ]['email'] ) ? $mairies[ $commune_slug ]['email'] : '';
 
         if ( empty( $to ) || ! is_email( $to ) ) {
+            self::log_event( array(
+                'commune_slug'  => $commune_slug,
+                'commune_label' => $commune_label,
+                'sender_email'  => $email,
+                'sender_ip'     => $sender_ip,
+                'message'       => $message,
+                'status'        => 'error',
+            ) );
+
             self::send_json_error( 'Email de la mairie invalide.' );
         }
 
@@ -167,6 +210,15 @@ class TPMP_Contact_Maire {
                 }
 
                 if ( false !== strpos( $normalized_message, $normalized_word ) ) {
+                    self::log_event( array(
+                        'commune_slug'  => $commune_slug,
+                        'commune_label' => $commune_label,
+                        'sender_email'  => $email,
+                        'sender_ip'     => $sender_ip,
+                        'message'       => $message,
+                        'status'        => 'blocked',
+                    ) );
+
                     self::send_json_error( 'Votre message contient un terme non autorisé. Merci de le reformuler.' );
                 }
             }
@@ -175,18 +227,30 @@ class TPMP_Contact_Maire {
         $subject = sprintf( 'Message TPMP pour la mairie de %s', $commune_label );
 
         $body_parts = array(
-            sprintf( 'Commune : %s', $commune_label ),
-            sprintf( "Email de l\'expéditeur : %s", $email ),
-            'Son message :',
+            sprintf( 'A l\'attention de Monsieur / Madame le / la Maire de %s.', $commune_label ),
             $message,
-            sprintf( 'IP du visiteur : %s', isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : 'N/A' ),
+            '',
+            '',
+            sprintf( 'Répondre à : %s', $email ),
+            sprintf( 'IP du visiteur : %s', $sender_ip ),
         );
 
-        $body = implode( "\n\n", $body_parts );
+        $body = implode( "\n", $body_parts );
 
         $headers = array( 'Content-Type: text/plain; charset=UTF-8' );
 
         $sent = wp_mail( $to, $subject, $body, $headers );
+
+        $status = $sent ? 'sent' : 'error';
+
+        self::log_event( array(
+            'commune_slug'  => $commune_slug,
+            'commune_label' => $commune_label,
+            'sender_email'  => $email,
+            'sender_ip'     => $sender_ip,
+            'message'       => $message,
+            'status'        => $status,
+        ) );
 
         if ( ! $sent ) {
             self::send_json_error( "Une erreur est survenue lors de l'envoi de l'email." );
@@ -699,6 +763,9 @@ class TPMP_Contact_Maire {
             case 'forbidden':
                 self::export_forbidden_words();
                 break;
+            case 'logs':
+                self::export_logs();
+                break;
             default:
                 wp_die( 'Export inconnu.' );
         }
@@ -759,6 +826,46 @@ class TPMP_Contact_Maire {
     }
 
     /**
+     * Export logs as CSV.
+     */
+    private static function export_logs() {
+        global $wpdb;
+
+        $table_name = self::get_logs_table_name();
+
+        self::send_csv_headers( 'tpmp-logs.csv' );
+        echo "ID;Date;Commune slug;Commune;Email expéditeur;IP;Statut;Message\n";
+
+        $logs = $wpdb->get_results( "SELECT * FROM {$table_name} ORDER BY created_at DESC", ARRAY_A );
+
+        if ( ! empty( $logs ) ) {
+            $output = fopen( 'php://output', 'w' );
+
+            foreach ( $logs as $log ) {
+                // fputcsv handles escaping of delimiters and line breaks.
+                fputcsv(
+                    $output,
+                    array(
+                        $log['id'],
+                        $log['created_at'],
+                        $log['commune_slug'],
+                        $log['commune_label'],
+                        $log['sender_email'],
+                        $log['sender_ip'],
+                        $log['status'],
+                        $log['message'],
+                    ),
+                    ';'
+                );
+            }
+
+            fclose( $output );
+        }
+
+        exit;
+    }
+
+    /**
      * Send CSV headers.
      *
      * @param string $filename File name.
@@ -766,6 +873,75 @@ class TPMP_Contact_Maire {
     private static function send_csv_headers( $filename ) {
         header( 'Content-Type: text/csv; charset=utf-8' );
         header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+    }
+
+    /**
+     * Insert a log entry and purge records older than one year.
+     *
+     * @param array $data Log data.
+     */
+    private static function log_event( $data ) {
+        global $wpdb;
+
+        $table_name = self::get_logs_table_name();
+
+        $wpdb->insert(
+            $table_name,
+            array(
+                'created_at'    => current_time( 'mysql' ),
+                'commune_slug'  => isset( $data['commune_slug'] ) ? $data['commune_slug'] : '',
+                'commune_label' => isset( $data['commune_label'] ) ? $data['commune_label'] : '',
+                'sender_email'  => isset( $data['sender_email'] ) ? $data['sender_email'] : '',
+                'sender_ip'     => isset( $data['sender_ip'] ) ? $data['sender_ip'] : '',
+                'message'       => isset( $data['message'] ) ? $data['message'] : '',
+                'status'        => isset( $data['status'] ) ? $data['status'] : 'sent',
+            ),
+            array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+        );
+
+        // Purge logs older than 1 year.
+        $cutoff = gmdate( 'Y-m-d H:i:s', time() - YEAR_IN_SECONDS );
+        $wpdb->query( $wpdb->prepare( "DELETE FROM $table_name WHERE created_at < %s", $cutoff ) );
+    }
+
+    /**
+     * Create or update the logs table structure.
+     */
+    public static function create_logs_table() {
+        global $wpdb;
+
+        $table_name      = self::get_logs_table_name();
+        $charset_collate = $wpdb->get_charset_collate();
+
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+        $sql = "CREATE TABLE {$table_name} (
+            id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            created_at DATETIME NOT NULL,
+            commune_slug VARCHAR(191) NOT NULL,
+            commune_label VARCHAR(191) NOT NULL,
+            sender_email VARCHAR(191) NOT NULL,
+            sender_ip VARCHAR(100) NOT NULL,
+            message LONGTEXT NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'sent',
+            PRIMARY KEY  (id),
+            KEY created_at (created_at),
+            KEY commune_slug (commune_slug),
+            KEY status (status)
+        ) {$charset_collate};";
+
+        dbDelta( $sql );
+    }
+
+    /**
+     * Get the fully-qualified logs table name.
+     *
+     * @return string
+     */
+    private static function get_logs_table_name() {
+        global $wpdb;
+
+        return $wpdb->prefix . self::LOG_TABLE;
     }
 
     /**
@@ -904,6 +1080,17 @@ class TPMP_Contact_Maire {
                 admin_url( 'options-general.php' )
             ),
             'tpmp_contact_maire_export_forbidden'
+        );
+
+        $export_logs_url = wp_nonce_url(
+            add_query_arg(
+                array(
+                    'page'        => 'tpmp-contact-maire-settings',
+                    'tpmp_export' => 'logs',
+                ),
+                admin_url( 'options-general.php' )
+            ),
+            'tpmp_contact_maire_export_logs'
         );
         ?>
         <div class="wrap">
@@ -1104,6 +1291,12 @@ class TPMP_Contact_Maire {
                 <input type="file" name="tpmp_forbidden_csv" accept=".csv" />
                 <?php submit_button( 'Importer les mots (CSV)', 'secondary', 'submit', false ); ?>
             </form>
+
+            <h3>Journal des envois (non visible)</h3>
+            <p>Les logs ne sont pas affichés ici. Vous pouvez les exporter en CSV en cas de contrôle. Conservation maximale : 1 an.</p>
+            <p>
+                <a class="button" href="<?php echo esc_url( $export_logs_url ); ?>">Exporter les logs (CSV)</a>
+            </p>
         </div>
         <?php
     }
@@ -1505,6 +1698,8 @@ array(
     if ( null === get_option( TPMP_Contact_Maire::FORBIDDEN_WORDS_OPTION, null ) ) {
         update_option( TPMP_Contact_Maire::FORBIDDEN_WORDS_OPTION, array() );
     }
+
+    TPMP_Contact_Maire::create_logs_table();
 }
 
 register_activation_hook( __FILE__, 'tpmp_contact_maire_activate' );
