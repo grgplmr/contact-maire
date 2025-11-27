@@ -218,20 +218,22 @@ class TPMP_Contact_Maire {
             }
         }
 
-        $subject = sprintf( 'Message TPMP pour la mairie de %s', $commune_label );
+        $subject = sprintf( 'Demande citoyenne concernant notre commune de %s', $commune_label );
 
-        $body_parts = array(
-            sprintf( 'A l\'attention de Monsieur / Madame le / la Maire de %s.', $commune_label ),
-            $message,
-            '',
-            '',
-            sprintf( 'Répondre à : %s', $email ),
-            sprintf( 'IP du visiteur : %s', $sender_ip ),
+        $message_html = nl2br( esc_html( $message ) );
+
+        $body  = '<div style="font-size:16px; line-height:1.6; font-family:Arial, sans-serif;">';
+        $body .= sprintf(
+            '<p>A l\'attention de Monsieur / Madame le / la Maire de %s,</p>',
+            esc_html( $commune_label )
         );
+        $body .= sprintf( '<p>%s</p>', $message_html );
+        $body .= '<br><br>';
+        $body .= sprintf( '<p><strong>Répondre à :</strong> %s</p>', esc_html( $email ) );
+        $body .= sprintf( '<p><strong>IP du visiteur :</strong> %s</p>', esc_html( $sender_ip ) );
+        $body .= '</div>';
 
-        $body = implode( "\n", $body_parts );
-
-        $headers = array( 'Content-Type: text/plain; charset=UTF-8' );
+        $headers = array( 'Content-Type: text/html; charset=UTF-8' );
 
         $sent = wp_mail( $to, $subject, $body, $headers );
 
