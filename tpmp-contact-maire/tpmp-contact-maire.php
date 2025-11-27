@@ -483,25 +483,32 @@ class TPMP_Contact_Maire {
         $rows = self::read_csv_file( $_FILES['tpmp_templates_csv']['tmp_name'] );
 
         $existing_templates = get_option( self::TEMPLATES_OPTION, array() );
-        $templates_by_id    = array();
-
-        foreach ( $existing_templates as $key => $template ) {
-            $existing_id = isset( $template['id'] ) ? $template['id'] : $key;
-            if ( empty( $existing_id ) ) {
-                continue;
-            }
-
-            $templates_by_id[ $existing_id ] = array(
-                'id'       => $existing_id,
-                'label'    => isset( $template['label'] ) ? $template['label'] : '',
-                'category' => isset( $template['category'] ) ? $template['category'] : '',
-                'content'  => isset( $template['content'] ) ? $template['content'] : '',
-            );
+        if ( ! is_array( $existing_templates ) ) {
+            $existing_templates = array();
         }
+
+        // Force a numerically indexed array so we always append new templates at the end.
+        $existing_templates = array_values( $existing_templates );
+
+        // Track existing hashes (category|label|content) to avoid exact duplicates on re-import.
+        $existing_hashes = array();
+        foreach ( $existing_templates as $template ) {
+            $existing_hash = md5(
+                strtolower( trim( isset( $template['category'] ) ? $template['category'] : '' ) ) . '|' .
+                strtolower( trim( isset( $template['label'] ) ? $template['label'] : '' ) ) . '|' .
+                strtolower( trim( isset( $template['content'] ) ? $template['content'] : '' ) )
+            );
+
+            $existing_hashes[ $existing_hash ] = true;
+        }
+
+        // Keep a per-slug counter so that identical titles produce unique IDs.
+        $slug_counts = array();
 
         $count = 0;
 
         foreach ( $rows as $index => $row ) {
+            // Ignore the header row if present (Titre;Catégorie;Contenu).
             if ( $index === 0 && isset( $row[0], $row[1], $row[2] ) ) {
                 $headers = array(
                     strtolower( trim( (string) $row[0] ) ),
@@ -522,27 +529,48 @@ class TPMP_Contact_Maire {
             $category = isset( $row[1] ) ? sanitize_text_field( wp_unslash( $row[1] ) ) : '';
             $content  = wp_kses_post( wp_unslash( $row[2] ) );
 
-            if ( empty( $title ) || empty( $content ) ) {
+            $title    = trim( $title );
+            $category = trim( $category );
+            $content  = trim( $content );
+
+            if ( '' === $title || '' === $content ) {
                 continue;
             }
 
-            $id = self::slugify( $title );
+            $base_slug = self::slugify( $title );
 
-            if ( empty( $id ) ) {
+            if ( '' === $base_slug ) {
                 continue;
             }
 
-            $templates_by_id[ $id ] = array(
+            if ( ! isset( $slug_counts[ $base_slug ] ) ) {
+                $slug_counts[ $base_slug ] = 0;
+            }
+
+            $slug_counts[ $base_slug ]++;
+
+            // Build a unique identifier for this row based on the slug and its occurrence count.
+            $id = $base_slug . '-' . $slug_counts[ $base_slug ];
+
+            $hash = md5( strtolower( $category ) . '|' . strtolower( $title ) . '|' . strtolower( $content ) );
+
+            // Skip exact duplicates if the same category/title/content already exists.
+            if ( isset( $existing_hashes[ $hash ] ) ) {
+                continue;
+            }
+
+            $existing_templates[] = array(
                 'id'       => $id,
                 'label'    => $title,
                 'category' => $category,
                 'content'  => $content,
             );
 
+            $existing_hashes[ $hash ] = true;
             $count++;
         }
 
-        update_option( self::TEMPLATES_OPTION, $templates_by_id );
+        update_option( self::TEMPLATES_OPTION, $existing_templates );
 
         add_settings_error(
             'tpmp_contact_maire',
