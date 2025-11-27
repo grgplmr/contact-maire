@@ -191,25 +191,19 @@ class TPMP_Contact_Maire {
             self::send_json_error( 'Email de la mairie invalide.' );
         }
 
-        $forbidden_words = get_option( self::FORBIDDEN_WORDS_OPTION, array() );
+        $forbidden_words = self::sanitize_forbidden_words_array( get_option( self::FORBIDDEN_WORDS_OPTION, array() ) );
 
         if ( ! empty( $forbidden_words ) ) {
-            $normalized_message = self::normalize_text( $message );
+            $normalized_message = mb_strtolower( remove_accents( $message ), 'UTF-8' );
 
             foreach ( $forbidden_words as $word ) {
-                $word = trim( (string) $word );
-
-                if ( '' === $word ) {
-                    continue;
-                }
-
-                $normalized_word = self::normalize_text( $word );
+                $normalized_word = self::normalize_forbidden_word( $word );
 
                 if ( '' === $normalized_word ) {
                     continue;
                 }
 
-                if ( false !== strpos( $normalized_message, $normalized_word ) ) {
+                if ( false !== mb_strpos( $normalized_message, $normalized_word, 0, 'UTF-8' ) ) {
                     self::log_event( array(
                         'commune_slug'  => $commune_slug,
                         'commune_label' => $commune_label,
@@ -656,19 +650,10 @@ class TPMP_Contact_Maire {
             check_admin_referer( 'tpmp_contact_maire_save_forbidden', 'tpmp_contact_maire_save_forbidden_nonce' );
 
             $raw_words = isset( $_POST['tpmp_forbidden_words'] ) ? (string) wp_unslash( $_POST['tpmp_forbidden_words'] ) : '';
-            $words     = array_filter( array_map( 'trim', preg_split( '/\r?\n/', $raw_words ) ), 'strlen' );
+            $words     = preg_split( '/\r?\n/', $raw_words );
+            $cleaned   = self::sanitize_forbidden_words_array( $words );
 
-            $cleaned = array();
-            foreach ( $words as $word ) {
-                $cleaned_word = sanitize_text_field( $word );
-                if ( '' === $cleaned_word ) {
-                    continue;
-                }
-                $lower = self::normalize_text( $cleaned_word );
-                $cleaned[ $lower ] = $cleaned_word;
-            }
-
-            update_option( self::FORBIDDEN_WORDS_OPTION, array_values( $cleaned ) );
+            update_option( self::FORBIDDEN_WORDS_OPTION, $cleaned );
 
             add_settings_error( 'tpmp_contact_maire', 'tpmp_contact_maire_forbidden_saved', 'Mots interdits enregistrés.', 'updated' );
             self::redirect_with_notices();
@@ -683,16 +668,12 @@ class TPMP_Contact_Maire {
             }
 
             $rows = self::read_csv_file( $_FILES['tpmp_forbidden_csv']['tmp_name'] );
-            $existing = get_option( self::FORBIDDEN_WORDS_OPTION, array() );
+            $existing = self::sanitize_forbidden_words_array( get_option( self::FORBIDDEN_WORDS_OPTION, array() ) );
 
             $words = array();
 
             foreach ( $existing as $word ) {
-                $normalized = self::normalize_text( $word );
-                if ( '' === $normalized ) {
-                    continue;
-                }
-                $words[ $normalized ] = $word;
+                self::add_forbidden_word_to_set( $words, $word );
             }
 
             $imported = 0;
@@ -706,21 +687,9 @@ class TPMP_Contact_Maire {
                 }
 
                 foreach ( $row as $value ) {
-                    $word = sanitize_text_field( wp_unslash( $value ) );
-                    $word = trim( $word );
-
-                    if ( '' === $word ) {
-                        continue;
+                    if ( self::add_forbidden_word_to_set( $words, $value ) ) {
+                        $imported++;
                     }
-
-                    $normalized = self::normalize_text( $word );
-
-                    if ( '' === $normalized || isset( $words[ $normalized ] ) ) {
-                        continue;
-                    }
-
-                    $words[ $normalized ] = $word;
-                    $imported++;
                 }
             }
 
@@ -735,6 +704,68 @@ class TPMP_Contact_Maire {
 
             self::redirect_with_notices();
         }
+    }
+
+    /**
+     * Add a forbidden word into an associative set keyed by normalized value.
+     *
+     * @param array  $set  Associative array of normalized => original word.
+     * @param string $word Word to add.
+     *
+     * @return bool True if the word was added, false otherwise.
+     */
+    private static function add_forbidden_word_to_set( &$set, $word ) {
+        $original = trim( (string) $word );
+
+        if ( '' === $original ) {
+            return false;
+        }
+
+        $normalized = self::normalize_forbidden_word( $original );
+
+        if ( '' === $normalized || isset( $set[ $normalized ] ) ) {
+            return false;
+        }
+
+        $set[ $normalized ] = sanitize_text_field( $original );
+
+        return true;
+    }
+
+    /**
+     * Sanitize and deduplicate a list of forbidden words.
+     *
+     * @param mixed $words Raw words list.
+     *
+     * @return array
+     */
+    private static function sanitize_forbidden_words_array( $words ) {
+        if ( is_string( $words ) ) {
+            $words = array( $words );
+        }
+
+        if ( ! is_array( $words ) ) {
+            return array();
+        }
+
+        $set = array();
+
+        foreach ( $words as $word ) {
+            self::add_forbidden_word_to_set( $set, $word );
+        }
+
+        return array_values( $set );
+    }
+
+    /**
+     * Normalize a forbidden word for case-insensitive comparison.
+     *
+     * @param string $word Word to normalize.
+     *
+     * @return string
+     */
+    private static function normalize_forbidden_word( $word ) {
+        return mb_strtolower( remove_accents( trim( (string) $word ) ), 'UTF-8' );
     }
 
     /**
@@ -813,7 +844,7 @@ class TPMP_Contact_Maire {
      * Export forbidden words as CSV.
      */
     private static function export_forbidden_words() {
-        $words = get_option( self::FORBIDDEN_WORDS_OPTION, array() );
+        $words = self::sanitize_forbidden_words_array( get_option( self::FORBIDDEN_WORDS_OPTION, array() ) );
 
         self::send_csv_headers( 'tpmp-forbidden-words.csv' );
         echo "Mot\n";
@@ -1006,9 +1037,7 @@ class TPMP_Contact_Maire {
      * @return string
      */
     private static function normalize_text( $text ) {
-        $text = remove_accents( strtolower( $text ) );
-
-        return $text;
+        return mb_strtolower( remove_accents( $text ), 'UTF-8' );
     }
 
     /**
@@ -1047,7 +1076,7 @@ class TPMP_Contact_Maire {
 
         $communes        = get_option( self::OPTION_NAME, array() );
         $templates       = get_option( self::TEMPLATES_OPTION, array() );
-        $forbidden_words = get_option( self::FORBIDDEN_WORDS_OPTION, array() );
+        $forbidden_words = self::sanitize_forbidden_words_array( get_option( self::FORBIDDEN_WORDS_OPTION, array() ) );
 
         $export_communes_url = wp_nonce_url(
             add_query_arg(
@@ -1277,7 +1306,20 @@ class TPMP_Contact_Maire {
                     <tbody>
                         <tr>
                             <th scope="row"><label for="tpmp_forbidden_words">Mots interdits (un par ligne)</label></th>
-                            <td><textarea name="tpmp_forbidden_words" id="tpmp_forbidden_words" rows="6" class="large-text"><?php echo esc_textarea( implode( "\n", $forbidden_words ) ); ?></textarea></td>
+                            <td>
+                                <textarea name="tpmp_forbidden_words" id="tpmp_forbidden_words" rows="6" class="large-text"><?php echo esc_textarea( implode( "\n", $forbidden_words ) ); ?></textarea>
+                                <p class="description">
+                                    <?php
+                                    $forbidden_count = count( $forbidden_words );
+                                    $forbidden_list  = implode( ', ', $forbidden_words );
+                                    ?>
+                                    <strong>Nombre de mots enregistrés : <?php echo esc_html( $forbidden_count ); ?></strong>
+                                    <?php if ( $forbidden_count > 0 ) : ?>
+                                        <br />
+                                        <small title="<?php echo esc_attr( $forbidden_list ); ?>">Liste actuelle : <?php echo esc_html( $forbidden_list ); ?></small>
+                                    <?php endif; ?>
+                                </p>
+                            </td>
                         </tr>
                     </tbody>
                 </table>
